@@ -21,8 +21,14 @@ use static_cell::make_static;
 
 use picoserve::extract::State;
 
-const WIFI_SSID: &str = "Pico W WiFi";
-const WIFI_PASSWORD: &str = "MyVerySecurePassword";
+const WIFI_SSID: &str = "Pico3";
+const WIFI_PASSWORD: &str = "xxxxxxxx";
+
+#[derive(serde::Deserialize)]
+struct FormValue {
+    a: i32,
+    b: heapless::String<32>,
+}
 
 embassy_rp::bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => embassy_rp::pio::InterruptHandler<embassy_rp::peripherals::PIO0>;
@@ -163,7 +169,7 @@ async fn main(spawner: embassy_executor::Spawner) {
     let stack = &*make_static!(embassy_net::Stack::new(
         net_device,
         embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-            address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(192, 168, 0, 1), 24),
+            address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(169, 254, 1, 1), 16),
             gateway: None,
             dns_servers: Default::default(),
         }),
@@ -174,10 +180,20 @@ async fn main(spawner: embassy_executor::Spawner) {
     spawner.must_spawn(net_task(stack));
 
     control.start_ap_wpa2(WIFI_SSID, WIFI_PASSWORD, 8).await;
+    //control.start_ap_open(WIFI_SSID, 8).await;
 
     fn make_app() -> picoserve::Router<AppRouter, AppState> {
         picoserve::Router::new()
-            .route("/", get(|| async move { "Hello World" }))
+            //.route("/", get(|| async move { "Hello World" }))
+            .route(
+                "/",
+                get(|| picoserve::response::File::html(include_str!("index.html"))).post(
+                    |picoserve::extract::Form(FormValue { a, b })| {
+                        log::info!("Received: {:?} {:?}", a, b);
+                        picoserve::response::Redirect::to("/")
+                    },
+                ),
+            )
             .route(
                 ("/set", parse_path_segment()),
                 get(
@@ -192,11 +208,13 @@ async fn main(spawner: embassy_executor::Spawner) {
     let app = make_static!(make_app());
 
     let config = make_static!(picoserve::Config::new(picoserve::Timeouts {
-        start_read_request: Some(Duration::from_secs(5)),
-        read_request: Some(Duration::from_secs(1)),
+        start_read_request: Some(Duration::from_secs(60)),
+        read_request: Some(Duration::from_secs(60)),
         write: Some(Duration::from_secs(1)),
     })
     .keep_connection_alive());
+
+    control.gpio_set(0, true).await;
 
     let shared_control = SharedControl(make_static!(Mutex::new(control)));
 
